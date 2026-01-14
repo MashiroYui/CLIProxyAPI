@@ -32,10 +32,35 @@ remote-management:
 auth-dir: "~/.cli-proxy-api"
 
 # API keys for authentication
+# Supports both simple string format and structured format with model permissions.
 api-keys:
+  # Simple string format (backward compatible) - allows access to all models
   - "your-api-key-1"
-  - "your-api-key-2"
-  - "your-api-key-3"
+
+  # Structured format with model permissions
+  - key: "your-api-key-2"
+    # allowed-models: whitelist of model patterns this key can access.
+    # If empty or omitted, all models are allowed (except denied ones).
+    # Supports wildcards: prefix-*, *-suffix, *contains*, or * for all.
+    allowed-models:
+      - "gemini-*"          # allow all gemini models
+      - "claude-sonnet-*"   # allow claude sonnet models only
+    # denied-models: blacklist of model patterns this key cannot access.
+    # Applied after allowed-models, takes precedence.
+    denied-models:
+      - "*-preview"         # deny all preview models
+
+  # Example: restrict to specific models only
+  - key: "your-api-key-3"
+    allowed-models:
+      - "gemini-2.5-flash"
+      - "gemini-2.5-pro"
+
+  # Example: allow all except specific models
+  - key: "your-api-key-4"
+    denied-models:
+      - "claude-opus-*"     # deny expensive opus models
+      - "*-thinking"        # deny thinking models
 
 # Enable debug logging
 debug: false

@@ -9,6 +9,7 @@ import internalconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 type SDKConfig = internalconfig.SDKConfig
 type AccessConfig = internalconfig.AccessConfig
 type AccessProvider = internalconfig.AccessProvider
+type APIKeyEntry = internalconfig.APIKeyEntry
 
 type Config = internalconfig.Config
 
@@ -40,6 +41,10 @@ const (
 
 func MakeInlineAPIKeyProvider(keys []string) *AccessProvider {
 	return internalconfig.MakeInlineAPIKeyProvider(keys)
+}
+
+func MakeInlineAPIKeyProviderFromEntries(entries []APIKeyEntry) *AccessProvider {
+	return internalconfig.MakeInlineAPIKeyProviderFromEntries(entries)
 }
 
 func LoadConfig(configFile string) (*Config, error) { return internalconfig.LoadConfig(configFile) }

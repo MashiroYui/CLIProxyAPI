@@ -1,5 +1,7 @@
 package auth
 
+import "net/http"
+
 // Error describes an authentication related failure in a provider agnostic format.
 type Error struct {
 	// Code is a short machine readable identifier.
@@ -30,3 +32,6 @@ func (e *Error) StatusCode() int {
 	}
 	return e.HTTPStatus
 }
+
+// Headers implements an optional header accessor used by API handlers.
+func (e *Error) Headers() http.Header { return nil }

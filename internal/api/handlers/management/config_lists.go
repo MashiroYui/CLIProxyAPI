@@ -21,7 +21,7 @@ func (h *Handler) putStringList(c *gin.Context, set func([]string), after func()
 		var obj struct {
 			Items []string `json:"items"`
 		}
-		if err2 := json.Unmarshal(data, &obj); err2 != nil || len(obj.Items) == 0 {
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
 			c.JSON(400, gin.H{"error": "invalid body"})
 			return
 		}
@@ -104,19 +104,205 @@ func (h *Handler) deleteFromStringList(c *gin.Context, target *[]string, after f
 	c.JSON(400, gin.H{"error": "missing index or value"})
 }
 
-// api-keys
-func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
-func (h *Handler) PutAPIKeys(c *gin.Context) {
-	h.putStringList(c, func(v []string) {
-		h.cfg.APIKeys = append([]string(nil), v...)
-		h.cfg.Access.Providers = nil
-	}, nil)
-}
+// api-keys (v1)
+// v1 endpoints only operate on the key strings and preserve any existing per-key permissions.
+func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.GetAPIKeyStrings()}) }
+func (h *Handler) PutAPIKeys(c *gin.Context) { h.putStringList(c, h.setAPIKeyStringsV1, h.afterAPIKeysUpdated) }
 func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	h.patchStringList(c, &h.cfg.APIKeys, func() { h.cfg.Access.Providers = nil })
+	var body struct {
+		Old   *string `json:"old"`
+		New   *string `json:"new"`
+		Index *int    `json:"index"`
+		Value *string `json:"value"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+
+	// Index/value update
+	if body.Index != nil && body.Value != nil {
+		idx := *body.Index
+		newKey := strings.TrimSpace(*body.Value)
+		if idx < 0 || idx >= len(h.cfg.APIKeys) {
+			c.JSON(400, gin.H{"error": "invalid index"})
+			return
+		}
+		if newKey == "" {
+			c.JSON(400, gin.H{"error": "missing fields"})
+			return
+		}
+		h.cfg.APIKeys[idx].Key = newKey
+		h.afterAPIKeysUpdated()
+		h.persist(c)
+		return
+	}
+
+	// Old/new update
+	if body.Old != nil && body.New != nil {
+		oldKey := strings.TrimSpace(*body.Old)
+		newKey := strings.TrimSpace(*body.New)
+		if newKey == "" {
+			c.JSON(400, gin.H{"error": "missing fields"})
+			return
+		}
+		for i := range h.cfg.APIKeys {
+			if strings.TrimSpace(h.cfg.APIKeys[i].Key) == oldKey {
+				h.cfg.APIKeys[i].Key = newKey
+				h.afterAPIKeysUpdated()
+				h.persist(c)
+				return
+			}
+		}
+		// Not found: append as plain key
+		h.cfg.APIKeys = append(h.cfg.APIKeys, config.APIKeyEntry{Key: newKey})
+		h.afterAPIKeysUpdated()
+		h.persist(c)
+		return
+	}
+
+	c.JSON(400, gin.H{"error": "missing fields"})
 }
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	h.deleteFromStringList(c, &h.cfg.APIKeys, func() { h.cfg.Access.Providers = nil })
+	if idxStr := c.Query("index"); idxStr != "" {
+		var idx int
+		_, err := fmt.Sscanf(idxStr, "%d", &idx)
+		if err == nil && idx >= 0 && idx < len(h.cfg.APIKeys) {
+			h.cfg.APIKeys = append(h.cfg.APIKeys[:idx], h.cfg.APIKeys[idx+1:]...)
+			h.afterAPIKeysUpdated()
+			h.persist(c)
+			return
+		}
+	}
+	if val := strings.TrimSpace(c.Query("value")); val != "" {
+		out := make([]config.APIKeyEntry, 0, len(h.cfg.APIKeys))
+		for _, v := range h.cfg.APIKeys {
+			if strings.TrimSpace(v.Key) != val {
+				out = append(out, v)
+			}
+		}
+		h.cfg.APIKeys = out
+		h.afterAPIKeysUpdated()
+		h.persist(c)
+		return
+	}
+	c.JSON(400, gin.H{"error": "missing index or value"})
+}
+
+// api-keys (v2)
+func (h *Handler) GetAPIKeysV2(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
+func (h *Handler) PutAPIKeysV2(c *gin.Context) {
+	data, err := c.GetRawData()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "failed to read body"})
+		return
+	}
+	var entries []config.APIKeyEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		var obj struct {
+			Items []config.APIKeyEntry `json:"items"`
+		}
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
+			c.JSON(400, gin.H{"error": "invalid body"})
+			return
+		}
+		entries = obj.Items
+	}
+	h.cfg.APIKeys = append([]config.APIKeyEntry(nil), entries...)
+	h.afterAPIKeysUpdated()
+	h.persist(c)
+}
+func (h *Handler) PatchAPIKeysV2(c *gin.Context) {
+	var body struct {
+		Old   *string             `json:"old"`
+		New   *config.APIKeyEntry `json:"new"`
+		Index *int                `json:"index"`
+		Value *config.APIKeyEntry `json:"value"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+	if body.Index != nil && body.Value != nil && *body.Index >= 0 && *body.Index < len(h.cfg.APIKeys) {
+		h.cfg.APIKeys[*body.Index] = *body.Value
+		h.afterAPIKeysUpdated()
+		h.persist(c)
+		return
+	}
+	if body.Old != nil && body.New != nil {
+		for i := range h.cfg.APIKeys {
+			if h.cfg.APIKeys[i].Key == *body.Old {
+				h.cfg.APIKeys[i] = *body.New
+				h.afterAPIKeysUpdated()
+				h.persist(c)
+				return
+			}
+		}
+		h.cfg.APIKeys = append(h.cfg.APIKeys, *body.New)
+		h.afterAPIKeysUpdated()
+		h.persist(c)
+		return
+	}
+	c.JSON(400, gin.H{"error": "missing fields"})
+}
+func (h *Handler) DeleteAPIKeysV2(c *gin.Context) {
+	if idxStr := c.Query("index"); idxStr != "" {
+		var idx int
+		_, err := fmt.Sscanf(idxStr, "%d", &idx)
+		if err == nil && idx >= 0 && idx < len(h.cfg.APIKeys) {
+			h.cfg.APIKeys = append(h.cfg.APIKeys[:idx], h.cfg.APIKeys[idx+1:]...)
+			h.afterAPIKeysUpdated()
+			h.persist(c)
+			return
+		}
+	}
+	if val := strings.TrimSpace(c.Query("value")); val != "" {
+		out := make([]config.APIKeyEntry, 0, len(h.cfg.APIKeys))
+		for _, v := range h.cfg.APIKeys {
+			if strings.TrimSpace(v.Key) != val {
+				out = append(out, v)
+			}
+		}
+		h.cfg.APIKeys = out
+		h.afterAPIKeysUpdated()
+		h.persist(c)
+		return
+	}
+	c.JSON(400, gin.H{"error": "missing index or value"})
+}
+
+func (h *Handler) afterAPIKeysUpdated() {
+	h.cfg.Access.Providers = nil
+}
+
+func (h *Handler) setAPIKeyStringsV1(keys []string) {
+	if h == nil || h.cfg == nil {
+		return
+	}
+
+	// Preserve existing permissions by key.
+	preserved := make(map[string]config.APIKeyEntry, len(h.cfg.APIKeys))
+	for _, entry := range h.cfg.APIKeys {
+		key := strings.TrimSpace(entry.Key)
+		if key == "" {
+			continue
+		}
+		preserved[key] = entry
+	}
+
+	out := make([]config.APIKeyEntry, 0, len(keys))
+	for _, key := range keys {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		if existing, ok := preserved[trimmed]; ok {
+			out = append(out, existing)
+			continue
+		}
+		out = append(out, config.APIKeyEntry{Key: trimmed})
+	}
+	h.cfg.APIKeys = out
 }
 
 // gemini-api-key: []GeminiKey
@@ -134,7 +320,7 @@ func (h *Handler) PutGeminiKeys(c *gin.Context) {
 		var obj struct {
 			Items []config.GeminiKey `json:"items"`
 		}
-		if err2 := json.Unmarshal(data, &obj); err2 != nil || len(obj.Items) == 0 {
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
 			c.JSON(400, gin.H{"error": "invalid body"})
 			return
 		}
@@ -257,7 +443,7 @@ func (h *Handler) PutClaudeKeys(c *gin.Context) {
 		var obj struct {
 			Items []config.ClaudeKey `json:"items"`
 		}
-		if err2 := json.Unmarshal(data, &obj); err2 != nil || len(obj.Items) == 0 {
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
 			c.JSON(400, gin.H{"error": "invalid body"})
 			return
 		}
@@ -376,7 +562,7 @@ func (h *Handler) PutOpenAICompat(c *gin.Context) {
 		var obj struct {
 			Items []config.OpenAICompatibility `json:"items"`
 		}
-		if err2 := json.Unmarshal(data, &obj); err2 != nil || len(obj.Items) == 0 {
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
 			c.JSON(400, gin.H{"error": "invalid body"})
 			return
 		}
@@ -502,7 +688,7 @@ func (h *Handler) PutVertexCompatKeys(c *gin.Context) {
 		var obj struct {
 			Items []config.VertexCompatKey `json:"items"`
 		}
-		if err2 := json.Unmarshal(data, &obj); err2 != nil || len(obj.Items) == 0 {
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
 			c.JSON(400, gin.H{"error": "invalid body"})
 			return
 		}
@@ -815,7 +1001,7 @@ func (h *Handler) PutCodexKeys(c *gin.Context) {
 		var obj struct {
 			Items []config.CodexKey `json:"items"`
 		}
-		if err2 := json.Unmarshal(data, &obj); err2 != nil || len(obj.Items) == 0 {
+		if err2 := json.Unmarshal(data, &obj); err2 != nil {
 			c.JSON(400, gin.H{"error": "invalid body"})
 			return
 		}
