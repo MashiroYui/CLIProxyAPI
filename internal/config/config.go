@@ -52,6 +52,9 @@ type Config struct {
 	// UsageStatisticsEnabled toggles in-memory usage aggregation; when false, usage data is discarded.
 	UsageStatisticsEnabled bool `yaml:"usage-statistics-enabled" json:"usage-statistics-enabled"`
 
+	// UsageDatabase configures database storage for usage statistics.
+	UsageDatabase UsageDatabaseConfig `yaml:"usage-database" json:"usage-database"`
+
 	// DisableCooling disables quota cooldown scheduling when true.
 	DisableCooling bool `yaml:"disable-cooling" json:"disable-cooling"`
 
@@ -113,6 +116,23 @@ type TLSConfig struct {
 	Cert string `yaml:"cert" json:"cert"`
 	// Key is the path to the TLS private key file.
 	Key string `yaml:"key" json:"key"`
+}
+
+// UsageDatabaseConfig configures database storage for usage statistics.
+type UsageDatabaseConfig struct {
+	// Enable toggles database storage for usage statistics.
+	Enable bool `yaml:"enable" json:"enable"`
+
+	// Driver specifies the database driver: "sqlite" or "postgres".
+	Driver string `yaml:"driver" json:"driver"`
+
+	// DSN is the Data Source Name for connecting to the database.
+	// For SQLite: path to database file (e.g., "./usage.db" or ":memory:").
+	// For PostgreSQL: connection string (e.g., "host=localhost user=postgres password=secret dbname=usage").
+	DSN string `yaml:"dsn" json:"dsn"`
+
+	// TablePrefix is an optional prefix for database table names.
+	TablePrefix string `yaml:"table-prefix,omitempty" json:"table-prefix,omitempty"`
 }
 
 // RemoteManagement holds management API configuration under 'remote-management'.

@@ -26,9 +26,11 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/store"
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/translator"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage/dbstore"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -404,6 +406,22 @@ func main() {
 	}
 	usage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
 	coreauth.SetQuotaCooldownDisabled(cfg.DisableCooling)
+
+	// Initialize database storage for usage statistics if enabled.
+	if cfg.UsageDatabase.Enable {
+		usageDBStore, errDB := dbstore.New(dbstore.Config{
+			Enable:      cfg.UsageDatabase.Enable,
+			Driver:      cfg.UsageDatabase.Driver,
+			DSN:         cfg.UsageDatabase.DSN,
+			TablePrefix: cfg.UsageDatabase.TablePrefix,
+		})
+		if errDB != nil {
+			log.Errorf("failed to initialize usage database store: %v", errDB)
+			return
+		}
+		coreusage.RegisterPlugin(usageDBStore)
+		log.Infof("usage database store enabled, driver: %s", cfg.UsageDatabase.Driver)
+	}
 
 	if err = logging.ConfigureLogOutput(cfg); err != nil {
 		log.Errorf("failed to configure log output: %v", err)
