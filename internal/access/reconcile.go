@@ -81,7 +81,7 @@ func ReconcileProviders(oldCfg, newCfg *config.Config, existing []sdkaccess.Prov
 	}
 
 	if len(result) == 0 {
-		if inline := sdkConfig.MakeInlineAPIKeyProvider(newCfg.APIKeys); inline != nil {
+		if inline := sdkConfig.MakeInlineAPIKeyProviderFromEntries(newCfg.APIKeys); inline != nil {
 			key := providerIdentifier(inline)
 			if key != "" {
 				if oldCfgProvider, ok := oldCfgMap[key]; ok {
@@ -177,7 +177,7 @@ func accessProviderMap(cfg *config.Config) map[string]*sdkConfig.AccessProvider 
 		result[key] = providerCfg
 	}
 	if len(result) == 0 && len(cfg.APIKeys) > 0 {
-		if provider := sdkConfig.MakeInlineAPIKeyProvider(cfg.APIKeys); provider != nil {
+		if provider := sdkConfig.MakeInlineAPIKeyProviderFromEntries(cfg.APIKeys); provider != nil {
 			if key := providerIdentifier(provider); key != "" {
 				result[key] = provider
 			}
@@ -198,7 +198,7 @@ func collectProviderEntries(cfg *config.Config) []*sdkConfig.AccessProvider {
 		}
 	}
 	if len(entries) == 0 && len(cfg.APIKeys) > 0 {
-		if inline := sdkConfig.MakeInlineAPIKeyProvider(cfg.APIKeys); inline != nil {
+		if inline := sdkConfig.MakeInlineAPIKeyProviderFromEntries(cfg.APIKeys); inline != nil {
 			entries = append(entries, inline)
 		}
 	}

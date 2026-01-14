@@ -660,7 +660,10 @@ func syncInlineAccessProvider(cfg *Config) {
 	}
 	if len(cfg.APIKeys) == 0 {
 		if provider := cfg.ConfigAPIKeyProvider(); provider != nil && len(provider.APIKeys) > 0 {
-			cfg.APIKeys = append([]string(nil), provider.APIKeys...)
+			// Convert old-style string keys to APIKeyEntry
+			for _, key := range provider.APIKeys {
+				cfg.APIKeys = append(cfg.APIKeys, APIKeyEntry{Key: key})
+			}
 		}
 	}
 	cfg.Access.Providers = nil

@@ -21,6 +21,7 @@ import (
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
+	coreaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
 	"golang.org/x/net/context"
 )
 
@@ -383,6 +384,11 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 	if errMsg != nil {
 		return nil, errMsg
 	}
+
+	if err := enforceModelPermissionFromAccessMetadata(ctx, normalizedModel); err != nil {
+		return nil, &interfaces.ErrorMessage{StatusCode: http.StatusForbidden, Error: err}
+	}
+
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
@@ -424,6 +430,11 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 	if errMsg != nil {
 		return nil, errMsg
 	}
+
+	if err := enforceModelPermissionFromAccessMetadata(ctx, normalizedModel); err != nil {
+		return nil, &interfaces.ErrorMessage{StatusCode: http.StatusForbidden, Error: err}
+	}
+
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
@@ -468,6 +479,14 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		close(errChan)
 		return nil, errChan
 	}
+
+	if err := enforceModelPermissionFromAccessMetadata(ctx, normalizedModel); err != nil {
+		errChan := make(chan *interfaces.ErrorMessage, 1)
+		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusForbidden, Error: err}
+		close(errChan)
+		return nil, errChan
+	}
+
 	reqMeta := requestExecutionMetadata(ctx)
 	req := coreexecutor.Request{
 		Model:   normalizedModel,
@@ -651,6 +670,28 @@ func cloneMetadata(src map[string]any) map[string]any {
 		dst[k] = v
 	}
 	return dst
+}
+
+func enforceModelPermissionFromAccessMetadata(ctx context.Context, model string) error {
+	if ctx == nil {
+		return nil
+	}
+	ginCtx, ok := ctx.Value("gin").(*gin.Context)
+	if !ok || ginCtx == nil {
+		return nil
+	}
+	raw, ok := ginCtx.Get("accessMetadata")
+	if !ok {
+		return nil
+	}
+	metadata, ok := raw.(map[string]string)
+	if !ok || len(metadata) == 0 {
+		return nil
+	}
+	if coreaccess.CheckModelAccessFromMetadata(metadata, model) {
+		return nil
+	}
+	return &coreauth.Error{Code: "model_not_allowed", Message: "API key not allowed to access requested model", HTTPStatus: http.StatusForbidden}
 }
 
 // WriteErrorResponse writes an error message to the response writer using the HTTP status embedded in the message.

@@ -4,6 +4,12 @@
 // debug settings, proxy configuration, and API keys.
 package config
 
+import (
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
@@ -18,7 +24,8 @@ type SDKConfig struct {
 	RequestLog bool `yaml:"request-log" json:"request-log"`
 
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
-	APIKeys []string `yaml:"api-keys" json:"api-keys"`
+	// Supports both simple string keys and structured APIKeyEntry objects.
+	APIKeys []APIKeyEntry `yaml:"api-keys" json:"api-keys"`
 
 	// Access holds request authentication provider configuration.
 	Access AccessConfig `yaml:"auth,omitempty" json:"auth,omitempty"`
@@ -29,6 +36,42 @@ type SDKConfig struct {
 	// NonStreamKeepAliveInterval controls how often blank lines are emitted for non-streaming responses.
 	// <= 0 disables keep-alives. Value is in seconds.
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
+}
+
+// APIKeyEntry represents an API key configuration with optional model restrictions.
+// It supports both simple string format and structured object format in YAML.
+type APIKeyEntry struct {
+	// Key is the API key string.
+	Key string `yaml:"key" json:"key"`
+
+	// AllowedModels is an optional list of model patterns this key can access.
+	// If empty, the key can access all models.
+	// Supports wildcards: "gemini-*" matches "gemini-2.5-pro", "*-preview" matches "gemini-3-pro-preview".
+	AllowedModels []string `yaml:"allowed-models,omitempty" json:"allowed-models,omitempty"`
+
+	// DeniedModels is an optional list of model patterns this key cannot access.
+	// Applied after AllowedModels. Supports the same wildcard patterns.
+	DeniedModels []string `yaml:"denied-models,omitempty" json:"denied-models,omitempty"`
+}
+
+// UnmarshalYAML implements custom YAML unmarshaling to support both string and object formats.
+func (e *APIKeyEntry) UnmarshalYAML(value *yaml.Node) error {
+	// Try to unmarshal as a simple string first
+	if value.Kind == yaml.ScalarNode {
+		e.Key = value.Value
+		e.AllowedModels = nil
+		e.DeniedModels = nil
+		return nil
+	}
+
+	// Otherwise, unmarshal as a structured object
+	type rawEntry APIKeyEntry
+	var raw rawEntry
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*e = APIKeyEntry(raw)
+	return nil
 }
 
 // StreamingConfig holds server streaming behavior configuration.
@@ -61,7 +104,11 @@ type AccessProvider struct {
 	SDK string `yaml:"sdk,omitempty" json:"sdk,omitempty"`
 
 	// APIKeys lists inline keys for providers that require them.
+	// Deprecated: Use APIKeyEntries for structured key configuration with model permissions.
 	APIKeys []string `yaml:"api-keys,omitempty" json:"api-keys,omitempty"`
+
+	// APIKeyEntries lists structured API key configurations with optional model restrictions.
+	APIKeyEntries []APIKeyEntry `yaml:"-" json:"-"`
 
 	// Config passes provider-specific options to the implementation.
 	Config map[string]any `yaml:"config,omitempty" json:"config,omitempty"`
@@ -104,3 +151,42 @@ func MakeInlineAPIKeyProvider(keys []string) *AccessProvider {
 	}
 	return provider
 }
+
+// MakeInlineAPIKeyProviderFromEntries constructs an inline API key provider configuration
+// from structured APIKeyEntry objects that may include model permissions.
+func MakeInlineAPIKeyProviderFromEntries(entries []APIKeyEntry) *AccessProvider {
+	if len(entries) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Key != "" {
+			keys = append(keys, entry.Key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	provider := &AccessProvider{
+		Name:          DefaultAccessProviderName,
+		Type:          AccessProviderTypeConfigAPIKey,
+		APIKeys:       keys,
+		APIKeyEntries: append([]APIKeyEntry(nil), entries...),
+	}
+	return provider
+}
+
+// GetAPIKeyStrings returns just the key strings from APIKeys entries.
+func (c *SDKConfig) GetAPIKeyStrings() []string {
+	if c == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(c.APIKeys))
+	for _, entry := range c.APIKeys {
+		if key := strings.TrimSpace(entry.Key); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
